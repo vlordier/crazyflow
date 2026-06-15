@@ -4,7 +4,6 @@ from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
 
-import drone_models
 import jax
 import jax.numpy as jnp
 import mujoco
@@ -95,7 +94,7 @@ class Sim:
         # Initialize MuJoCo world and data
         self._xml_path = xml_path or Path(__file__).parents[1] / "scene.xml"
         model_file_name = f"{drone_model}{'_fused' if fused_mjx_model else ''}.xml"
-        self.drone_path = Path(drone_models.__file__).parent / "data" / model_file_name
+        self.drone_path = Path(__file__).parents[1] / "models/data" / model_file_name
         self.spec = self.build_mjx_spec()
         self.mj_model, self.mj_data, self.mjx_model, self.mjx_data = self.build_mjx_model(self.spec)
         self.viewer: MujocoRenderer | None = None
