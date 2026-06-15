@@ -7,7 +7,7 @@ Crazyflow has two pipelines, one for stepping and one for resetting, each a tupl
 `sim.step_pipeline` contains four stages by default:
 
 1. **Control functions** — convert the staged command through the control hierarchy (state → attitude → force/torque → rotor velocities, depending on the selected mode)
-2. **Integrator** — advance the ODE one physics step (Euler, RK4, or symplectic Euler)
+2. **Integrator** — advance the ODE one dynamics step (Euler, RK4, or symplectic Euler)
 3. **Step counter** — increment `data.core.steps`
 4. **Floor clip** — prevent drones from passing through the floor
 

@@ -5,12 +5,12 @@ import jax.numpy as jnp
 from numpy.typing import NDArray
 
 from crazyflow.control import Control
-from crazyflow.sim import Physics, Sim
+from crazyflow.sim import Dynamics, Sim
 from crazyflow.sim.data import SimData
 
 
 def main():
-    sim = Sim(control=Control.attitude, physics=Physics.first_principles, attitude_freq=50)
+    sim = Sim(control=Control.attitude, dynamics=Dynamics.first_principles, attitude_freq=50)
     # Remove clipping floor function which kills gradients
     sim.step_pipeline = sim.step_pipeline[:-1]
     sim_step = sim.build_step_fn()
