@@ -389,6 +389,11 @@ class FixedWingData:
     """Extra drag coefficient at stall."""
     stall_k: Array  # (N, M, 1)
     """Stall drag rise sharpness."""
+    # Autopilot inner-loop gains (0 = disabled)
+    k_pitch_attitude: Array  # (N, M, 1)
+    """Pitch attitude feedback gain. 0 = open-loop."""
+    k_pitch_rate: Array  # (N, M, 1)
+    """Pitch rate damping gain. 0 = open-loop."""
 
     @staticmethod
     def create(n_worlds: int, n_drones: int, drone_model: str, device: Device) -> FixedWingData:
@@ -432,6 +437,9 @@ class FixedWingData:
             CL_max=jnp.full((n_worlds, n_drones, 1), p["CL_max"], device=device),
             CD_stall=jnp.full((n_worlds, n_drones, 1), p["CD_stall"], device=device),
             stall_k=jnp.full((n_worlds, n_drones, 1), p["stall_k"], device=device),
+            # Autopilot (default 0 = open-loop, no inner-loop stabilization)
+            k_pitch_attitude=jnp.full((n_worlds, n_drones, 1), p.get("k_pitch_attitude", 0.0), device=device),
+            k_pitch_rate=jnp.full((n_worlds, n_drones, 1), p.get("k_pitch_rate", 0.0), device=device),
         )
 
 
@@ -497,9 +505,21 @@ def fixed_wing_physics(data: SimData) -> SimData:
     # Dynamic pressure: qbar = 0.5 * rho * V^2
     qbar = 0.5 * params.rho * V**2
 
+    # ── Autopilot inner loop ──
+    # Extract pitch angle from quaternion [x, y, z, w]:
+    # pitch = arcsin(2 * (qw * qy - qz * qx))
+    pitch_angle = jnp.arcsin(jnp.clip(2.0 * (qw * qy - qz * qx), -1.0, 1.0))
+    pitch_rate = states.ang_vel[..., 1:2]  # body-frame pitch rate
+    autopilot_active = (jnp.abs(params.k_pitch_attitude) + jnp.abs(params.k_pitch_rate)) > 1e-8
+    target_pitch = jnp.zeros_like(pitch_angle)  # level flight
+    elevon_pitch_trim = autopilot_active * (
+        params.k_pitch_attitude * (target_pitch - pitch_angle)
+        + params.k_pitch_rate * (0.0 - pitch_rate)
+    )
+
     # ── Longitudinal forces (body frame) ──
-    # Control surface deflections from torque command (normalized by T_max)
-    de = states.torque[..., 1:2] / params.T_max  # symmetric elevon (pitch cmd)
+    # Control surface deflections from torque command + autopilot trim
+    de = states.torque[..., 1:2] / params.T_max + elevon_pitch_trim  # symmetric elevon
 
     # Lift coefficient
     CL = params.CL0 + params.CL_alpha * alpha + params.CL_de * de
