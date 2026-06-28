@@ -25,6 +25,7 @@ from crazyflow.sim.integration import Integrator, euler, rk4, symplectic_euler
 from crazyflow.sim.physics import (
     Physics,
     first_principles_physics,
+    fixed_wing_physics,
     so_rpy_physics,
     so_rpy_rotor_drag_physics,
     so_rpy_rotor_physics,
@@ -76,8 +77,8 @@ class Sim:
     ):
         assert Physics(physics) in Physics, f"Physics mode {physics} not implemented"
         assert Control(control) in Control, f"Control mode {control} not implemented"
-        if physics != Physics.first_principles and control == Control.force_torque:
-            raise ConfigError("Force-torque control requires first principles physics")
+        if physics not in (Physics.first_principles, Physics.fixed_wing) and control == Control.force_torque:
+            raise ConfigError("Force-torque control requires first principles or fixed_wing physics")
         if freq > 10_000 and not jax.config.jax_enable_x64:
             raise ConfigError("High frequency simulations require double precision mode")
         self.physics = physics
@@ -470,7 +471,10 @@ def build_control_fns(
             else:
                 raise NotImplementedError(f"Control mode {control} not implemented for {physics}")
         case Control.force_torque:
-            control_pipeline = (step_force_torque_controller,)
+            if physics == Physics.fixed_wing:
+                control_pipeline = (step_force_torque_fixed_wing,)
+            else:
+                control_pipeline = (step_force_torque_controller,)
         case _:
             raise NotImplementedError(f"Control mode {control} not implemented")
 
@@ -488,6 +492,8 @@ def select_physics_fn(physics: Physics) -> Callable[[SimData], SimData]:
             return so_rpy_rotor_physics
         case Physics.so_rpy_rotor_drag:
             return so_rpy_rotor_drag_physics
+        case Physics.fixed_wing:
+            return fixed_wing_physics
         case _:
             raise NotImplementedError(f"Physics mode {physics} not implemented")
 
@@ -613,6 +619,47 @@ def step_force_torque_controller(data: SimData) -> SimData:
     )
     ft_ctrl = leaf_replace(ft_ctrl, mask, steps=data.core.steps)
     return data.replace(controls=data.controls.replace(rotor_vel=rotor_vel, force_torque=ft_ctrl))
+
+
+@jax.jit
+def _quat_rotate_vector(quat: Array, vec: Array) -> Array:
+    """Rotate a vector by a unit quaternion (xyzw format).
+
+    Uses the formula: v' = v + 2*w*cross(q.xyz, v) + 2*cross(q.xyz, cross(q.xyz, v))
+
+    Args:
+        quat: Unit quaternion in xyzw format, shape (..., 4).
+        vec: Vector to rotate, shape (..., 3).
+
+    Returns:
+        Rotated vector, shape (..., 3).
+    """
+    xyz = quat[..., :3]
+    w = quat[..., 3:]
+    t = 2.0 * jnp.cross(xyz, vec)
+    return vec + w * t + jnp.cross(xyz, t)
+
+
+def step_force_torque_fixed_wing(data: SimData) -> SimData:
+    """Commit staged force/torque commands directly to states for fixed-wing physics.
+
+    The staged command [fz, tx, ty, tz] provides body-z thrust and body-frame torque.
+    The force is rotated from body frame to world frame for linear acceleration.
+    The torque is stored in body frame for J_inv multiplication in fixed_wing_physics.
+    """
+    ft_ctrl: MellingerForceTorqueData = data.controls.force_torque
+    assert ft_ctrl is not None, "Using force torque controller without initialized data"
+    mask = controllable(data.core.steps, data.core.freq, ft_ctrl.steps, ft_ctrl.freq)
+    ft_ctrl = leaf_replace(ft_ctrl, mask, cmd=ft_ctrl.staged_cmd)
+    # Body-z force [0, 0, fz] rotated to world frame
+    body_force = jnp.zeros_like(data.states.pos)
+    body_force = body_force.at[..., 2].set(ft_ctrl.cmd[..., 0])
+    world_force = _quat_rotate_vector(data.states.quat, body_force)
+    # Torque from cmd [tx, ty, tz] — stored in body frame for J_inv
+    torque = ft_ctrl.cmd[..., 1:4]
+    states = data.states.replace(force=world_force, torque=torque)
+    ft_ctrl = leaf_replace(ft_ctrl, mask, steps=data.core.steps)
+    return data.replace(states=states, controls=data.controls.replace(force_torque=ft_ctrl))
 
 
 def clip_floor_pos(data: SimData) -> SimData:

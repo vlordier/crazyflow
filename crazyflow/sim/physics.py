@@ -28,6 +28,7 @@ class Physics(str, Enum):
     so_rpy = "so_rpy"
     so_rpy_rotor = "so_rpy_rotor"
     so_rpy_rotor_drag = "so_rpy_rotor_drag"
+    fixed_wing = "fixed_wing"
     default = first_principles
 
 
@@ -318,5 +319,51 @@ def so_rpy_rotor_drag_physics(data: SimData) -> SimData:
     )
     states_deriv = data.states_deriv.replace(
         vel=vel, ang_vel=data.states.ang_vel, acc=acc, ang_acc=ang_acc, rotor_acc=rotor_acc
+    )
+    return data.replace(states_deriv=states_deriv)
+
+
+@dataclass
+class FixedWingData:
+    mass: Array  # (N, M, 1)
+    """Mass of the drone."""
+    gravity_vec: Array  # (N, M, 3)
+    """Gravity vector of the drone."""
+    J: Array  # (N, M, 3, 3)
+    """Inertia matrix of the drone."""
+    J_inv: Array  # (N, M, 3, 3)
+    """Inverse of the inertia matrix of the drone."""
+
+    @staticmethod
+    def create(n_worlds: int, n_drones: int, drone_model: str, device: Device) -> FixedWingData:
+        """Create default parameters from drone-models data."""
+        p = load_params("fixed_wing", drone_model)
+        J = jax.device_put(jnp.tile(p["J"][None, None, :, :], (n_worlds, n_drones, 1, 1)), device)
+        return FixedWingData(
+            mass=jnp.full((n_worlds, n_drones, 1), p["mass"], device=device),
+            gravity_vec=jnp.asarray(p["gravity_vec"], device=device),
+            J=J,
+            J_inv=jnp.linalg.inv(J),
+        )
+
+
+def fixed_wing_physics(data: SimData) -> SimData:
+    """Compute accelerations from commanded forces/torques for fixed-wing aircraft.
+
+    Force/torque control sets states.force and states.torque directly.
+    This physics function converts them into linear and angular accelerations.
+    """
+    params: FixedWingData = data.params
+    # Linear acceleration: F = ma -> a = F / m
+    acc = data.states.force / params.mass
+    # Angular acceleration: tau = I*alpha -> alpha = I^(-1)*tau
+    ang_acc = jnp.einsum("...ij,...j->...i", params.J_inv, data.states.torque)
+    # Velocity and angular velocity derivatives are the current velocity/angular-velocity
+    # (passed through for the integrator to compute next state)
+    states_deriv = data.states_deriv.replace(
+        vel=data.states.vel,
+        ang_vel=data.states.ang_vel,
+        acc=acc,
+        ang_acc=ang_acc,
     )
     return data.replace(states_deriv=states_deriv)
