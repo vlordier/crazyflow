@@ -641,22 +641,29 @@ def _quat_rotate_vector(quat: Array, vec: Array) -> Array:
 
 
 def step_force_torque_fixed_wing(data: SimData) -> SimData:
-    """Commit staged force/torque commands directly to states for fixed-wing physics.
+    """Commit staged force/torque commands to states for fixed-wing physics.
 
-    The staged command [fz, tx, ty, tz] provides body-z thrust and body-frame torque.
+    The staged command [throttle, elevon_roll, elevon_pitch, _unused_] provides:
+      - throttle: thrust along body-x (forward, rotated to world frame)
+      - elevon_roll: differential elevon deflection for roll control
+      - elevon_pitch: symmetric elevon deflection for pitch control
+
     The force is rotated from body frame to world frame for linear acceleration.
-    The torque is stored in body frame for J_inv multiplication in fixed_wing_physics.
+    The torque is stored in body frame for use as control surface commands in fixed_wing_physics.
     """
     ft_ctrl: MellingerForceTorqueData = data.controls.force_torque
     assert ft_ctrl is not None, "Using force torque controller without initialized data"
     mask = controllable(data.core.steps, data.core.freq, ft_ctrl.steps, ft_ctrl.freq)
     ft_ctrl = leaf_replace(ft_ctrl, mask, cmd=ft_ctrl.staged_cmd)
-    # Body-z force [0, 0, fz] rotated to world frame
+    # Body-x thrust (forward for pusher prop), rotated to world frame
     body_force = jnp.zeros_like(data.states.pos)
-    body_force = body_force.at[..., 2].set(ft_ctrl.cmd[..., 0])
+    body_force = body_force.at[..., 0].set(ft_ctrl.cmd[..., 0])  # body-x: thrust
     world_force = _quat_rotate_vector(data.states.quat, body_force)
-    # Torque from cmd [tx, ty, tz] — stored in body frame for J_inv
-    torque = ft_ctrl.cmd[..., 1:4]
+    # Torque: [elevon_roll, elevon_pitch, 0] in body frame
+    torque = jnp.zeros_like(data.states.torque)
+    torque = torque.at[..., 0].set(ft_ctrl.cmd[..., 1])  # elevon_roll
+    torque = torque.at[..., 1].set(ft_ctrl.cmd[..., 2])  # elevon_pitch
+    # cmd[..., 3] unused
     states = data.states.replace(force=world_force, torque=torque)
     ft_ctrl = leaf_replace(ft_ctrl, mask, steps=data.core.steps)
     return data.replace(states=states, controls=data.controls.replace(force_torque=ft_ctrl))
