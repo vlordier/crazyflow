@@ -670,11 +670,15 @@ def step_force_torque_fixed_wing(data: SimData) -> SimData:
 
 
 def clip_floor_pos(data: SimData) -> SimData:
-    """Clip the position of the drone to the floor."""
+    """Clip the position and vertical velocity of the drone to the floor.
+
+    Only the z-component of velocity is zeroed on floor contact — horizontal velocity is preserved
+    so fixed-wing drones can maintain forward speed to generate aerodynamic lift.
+    """
     clip = data.states.pos[..., 2] < -0.001
     clip_pos = data.states.pos.at[..., 2].set(jnp.where(clip, -0.001, data.states.pos[..., 2]))
-    clip_vel = data.states.vel.at[..., :3].set(
-        jnp.where(clip[..., None], 0, data.states.vel[..., :3])
+    clip_vel = data.states.vel.at[..., 2:3].set(
+        jnp.where(clip[..., None], 0, data.states.vel[..., 2:3])
     )
     return data.replace(states=data.states.replace(pos=clip_pos, vel=clip_vel))
 

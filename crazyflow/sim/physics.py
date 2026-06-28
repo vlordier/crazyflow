@@ -511,10 +511,10 @@ def fixed_wing_physics(data: SimData) -> SimData:
     pitch_angle = jnp.arcsin(jnp.clip(2.0 * (qw * qy - qz * qx), -1.0, 1.0))
     pitch_rate = states.ang_vel[..., 1:2]  # body-frame pitch rate
     autopilot_active = (jnp.abs(params.k_pitch_attitude) + jnp.abs(params.k_pitch_rate)) > 1e-8
-    target_pitch = jnp.zeros_like(pitch_angle)  # level flight
+    target_pitch = jnp.zeros_like(pitch_angle) + 0.126  # 7.2° nose-up for level flight at 50 m/s [rad]
     elevon_pitch_trim = autopilot_active * (
-        params.k_pitch_attitude * (target_pitch - pitch_angle)
-        + params.k_pitch_rate * (0.0 - pitch_rate)
+        params.k_pitch_attitude * (pitch_angle - target_pitch)
+        + params.k_pitch_rate * pitch_rate
     )
 
     # ── Longitudinal forces (body frame) ──
