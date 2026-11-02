@@ -5268,6 +5268,7 @@ packages:
   - drone-models==0.1.0
   - drone-controllers==0.2.0
   - jax[cuda12] ; extra == 'gpu'
+  - jax-mps ; extra == 'mps'
   - fire ; extra == 'benchmark'
   - matplotlib ; extra == 'benchmark'
   - pandas ; extra == 'benchmark'
